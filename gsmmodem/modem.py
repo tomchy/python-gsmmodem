@@ -126,7 +126,7 @@ class GsmModem(SerialComms):
     # Used for parsing SMS message reads (PDU mode)
     CMGR_REGEX_PDU = None
     # Used for parsing USSD event notifications
-    CUSD_REGEX = re.compile(r'\+CUSD:\s*(\d),"(.*?)",(\d+)', re.DOTALL)
+    CUSD_REGEX = re.compile(r'\+CUSD:\s*(\d)(?:,")?(.[^"]*)?(?:")?', re.DOTALL)
     # Used for parsing SMS status reports
     CDSI_REGEX = re.compile(r'\+CDSI:\s*"([^"]+)",(\d+)$')
     
@@ -1133,24 +1133,21 @@ class GsmModem(SerialComms):
             # Single standard +CUSD response
             cusdMatches = [self.CUSD_REGEX.match(lines[0])]
         message = None
-        sessionActive = True
         if len(cusdMatches) > 1:
             self.log.debug('Multiple +CUSD responses received; filtering...')
             # Some modems issue a non-standard "extra" +CUSD notification for releasing the session
             for cusdMatch in cusdMatches:
-                if cusdMatch.group(1) == '2':
+                statuscode = int(cusdMatches[0].group(1))
+                if statuscode == 2:
                     # Set the session to inactive, but ignore the message
                     self.log.debug('Ignoring "session release" message: %s', cusdMatch.group(2))
-                    sessionActive = False
                 else:
                     # Not a "session release" message
                     message = cusdMatch.group(2)
-                    if sessionActive and cusdMatch.group(1) != '1':
-                        sessionActive = False
         else:
-            sessionActive = cusdMatches[0].group(1) == '1'
+            statuscode = int(cusdMatches[0].group(1))
             message = cusdMatches[0].group(2)
-        return Ussd(self, sessionActive, message)
+        return Ussd(self, statuscode, message)
 
     def _placeHolderCallback(self, *args):
         """ Does nothing """
@@ -1327,12 +1324,16 @@ class Ussd(object):
     and to cancel the USSD session
     """
     
-    def __init__(self, gsmModem, sessionActive, message):
+    def __init__(self, gsmModem, statuscode, message):
         self._gsmModem = weakref.proxy(gsmModem)
-        # Indicates if the session is active (True) or has been closed (False)
-        self.sessionActive = sessionActive
+        self.statuscode = statuscode
         self.message = message
-    
+
+    @property
+    def sessionActive(self):
+        """ Indicates if the session is active (True) or has been closed (False)"""
+        return self.statuscode == 1
+
     def reply(self, message):
         """ Sends a reply to this USSD message in the same USSD session 
         
