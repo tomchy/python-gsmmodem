@@ -4,7 +4,7 @@
 
 from __future__ import unicode_literals
 
-import sys, codecs, math
+import sys, codecs
 from datetime import datetime, timedelta, tzinfo
 from copy import copy
 from .exceptions import EncodingError
@@ -547,11 +547,8 @@ def _decodeDataCoding(octet):
     # We ignore other coding groups
     return 0
 
-def nibble2octet(o):
-    if o % 2:
-        return o / 2 + 1
-    else:
-        return o / 2
+def nibble2octet(addressLen):
+    addressLen = int((addressLen + 1) / 2)
 
 def _decodeAddressField(byteIter, smscField=False, log=False):
     """ Decodes the address field at the current position of the bytearray iterator
