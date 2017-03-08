@@ -1315,15 +1315,15 @@ class TestSms(unittest.TestCase):
                   1,
                   datetime(2013, 3, 8, 15, 2, 16, tzinfo=SimpleOffsetTzInfo(2)),
                   '+2782913593',
-                  [('00218E0A91103254769800081C00480065006C006C00C300B300200077006F007200C5008200640021', 40, 142)],
+                  [('00218E0A91103254769800081800480065006C006C00F300200077006F0072014200640021', 36, 142)],
                   'SM',
                   'UCS2'),
-                 ('+0123456789', 'Hello world!\n Hello world!\n Hello world!\n Hello world!\n  Helló worłd!',
+                 ('+0123456789', 'Hello world!\n Hello world!\n Hello world!\n Hello world!\n-> Helló worłd! ',
                   1,
                   datetime(2013, 3, 8, 15, 2, 16, tzinfo=SimpleOffsetTzInfo(2)),
                   '+2782913593',
-                  [('00618F0A91103254769800088C0500038F020100480065006C006C006F00200077006F0072006C00640021000A002000480065006C006C006F00200077006F0072006C00640021000A002000480065006C006C006F00200077006F0072006C00640021000A002000480065006C006C006F00200077006F0072006C00640021000A0020002000480065006C006C00C300B300200077006F0072', 152, 143),
-                   ('00618F0A91103254769800080E0500038F020200C5008200640021', 26, 143)],
+                  [('00618F0A91103254769800088C0500038F020100480065006C006C006F00200077006F0072006C00640021000A002000480065006C006C006F00200077006F0072006C00640021000A002000480065006C006C006F00200077006F0072006C00640021000A002000480065006C006C006F00200077006F0072006C00640021000A002D003E002000480065006C006C00F300200077006F0072', 152, 143),
+                   ('00618F0A91103254769800080E0500038F02020142006400210020', 26, 143)],
                   'SM',
                   'UCS2'),)
 
@@ -1341,7 +1341,6 @@ class TestSms(unittest.TestCase):
 
                 def writeCallbackFunc4(data):
                     # Fourth step - send PDU length
-                    print(len(message))
                     tpdu_length = pdus[self.currentPdu][1]
                     ref = pdus[self.currentPdu][2]
                     self.assertEqual('AT+CMGS={0}\r'.format(tpdu_length), data, 'Invalid data written to modem; expected "{0}", got: "{1}"'.format('AT+CMGS={0}'.format(tpdu_length), data))
@@ -2150,31 +2149,48 @@ class TestSmsStatusReports(unittest.TestCase):
                 time.sleep(0.1)
         self.modem.close()
 
-    def test_receiveSmsPduMode_zeroLengthSmscAndHugeTimeZoneValue(self):
+    def test_receiveSmsPduMode_invalidPDUsRecordedFromModems(self):
         """ Test receiving PDU-mode SMS using data captured from failed operations/bug reports """
-        modemResponse = ['+CMGR: 1,,26\r\n', '0006230E9126983575169498610103409544C26101034095448200\r\n', 'OK\r\n']
+        tests = ((['+CMGR: 1,,26\r\n', '0006230E9126983575169498610103409544C26101034095448200\r\n', 'OK\r\n'], # see: babca/python-gsmmodem#15
+                  Sms.STATUS_RECEIVED_READ, # message read status
+                  '+62895357614989', # number
+                  35, # reference
+                  datetime(2016, 10, 30, 4, 59, 44, tzinfo=SimpleOffsetTzInfo(8)), # sentTime
+                  datetime(2016, 10, 30, 4, 59, 44, tzinfo=SimpleOffsetTzInfo(7)), # deliverTime
+                  StatusReport.DELIVERED), # delivery status
+                 )
 
-        callbackInfo = [False, '', '', -1, None, '', None]
-        def smsCallbackFunc1(sms):
-            try:
-                self.assertIsInstance(sms, gsmmodem.modem.StatusReport)
-                self.assertEqual(sms.status, gsmmodem.modem.Sms.STATUS_RECEIVED_READ)
-            finally:
-                callbackInfo[0] = True
+        callbackDone = [False]
 
-        def writeCallback1(data):
-            if data.startswith('AT+CMGR'):
-                self.modem.serial.flushResponseSequence = True
-                self.modem.serial.responseSequence = modemResponse
+        for modemResponse, msgStatus, number, reference, sentTime, deliverTime, deliveryStatus in tests:
+            def smsCallbackFunc1(sms):
+                try:
+                    self.assertIsInstance(sms, gsmmodem.modem.StatusReport)
+                    self.assertEqual(sms.status, msgStatus, 'Status report read status incorrect. Expected: "{0}", got: "{1}"'.format(msgStatus, sms.status))
+                    self.assertEqual(sms.number, number, 'SMS sender number incorrect. Expected: "{0}", got: "{1}"'.format(number, sms.number))
+                    self.assertEqual(sms.reference, reference, 'Status report SMS reference number incorrect. Expected: "{0}", got: "{1}"'.format(reference, sms.reference))
+                    self.assertIsInstance(sms.timeSent, datetime, 'SMS sent time type invalid. Expected: datetime.datetime, got: {0}"'.format(type(sms.timeSent)))
+                    self.assertEqual(sms.timeSent, sentTime, 'SMS sent time incorrect. Expected: "{0}", got: "{1}"'.format(sentTime, sms.timeSent))
+                    self.assertIsInstance(sms.timeFinalized, datetime, 'SMS finalized time type invalid. Expected: datetime.datetime, got: {0}"'.format(type(sms.timeFinalized)))
+                    self.assertEqual(sms.timeFinalized, deliverTime, 'SMS finalized time incorrect. Expected: "{0}", got: "{1}"'.format(deliverTime, sms.timeFinalized))
+                    self.assertEqual(sms.deliveryStatus, deliveryStatus, 'SMS delivery status incorrect. Expected: "{0}", got: "{1}"'.format(deliveryStatus, sms.deliveryStatus))
+                    self.assertEqual(sms.smsc, None, 'This SMS should not have any SMSC information')
+                finally:
+                    callbackDone[0] = True
 
-        self.initModem(smsStatusReportCallback=smsCallbackFunc1)
-        # Fake a "new message" notification
-        self.modem.serial.writeCallbackFunc = writeCallback1
-        self.modem.serial.flushResponseSequence = True
-        self.modem.serial.responseSequence = ['+CDSI: "SM",1\r\n']
-        # Wait for the handler function to finish
-        while callbackInfo[0] == False:
-            time.sleep(0.1)
+            def writeCallback1(data):
+                if data.startswith('AT+CMGR'):
+                    self.modem.serial.flushResponseSequence = True
+                    self.modem.serial.responseSequence = modemResponse
+
+            self.initModem(smsStatusReportCallback=smsCallbackFunc1)
+            # Fake a "new message" notification
+            self.modem.serial.writeCallbackFunc = writeCallback1
+            self.modem.serial.flushResponseSequence = True
+            self.modem.serial.responseSequence = ['+CDSI: "SM",1\r\n']
+            # Wait for the handler function to finish
+            while callbackDone[0] == False:
+                time.sleep(0.1)
 
 
 

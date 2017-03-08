@@ -73,12 +73,12 @@ class SmsPduTzInfo(tzinfo):
         #  - Read HEX value as decimal
         #  - Multiply by 15
         # See: https://en.wikipedia.org/wiki/GSM_03.40#Time_Format
-        try:
-            tzOffsetMinutes = int('{0:0>2X}'.format(tzHexVal & 0x7F)) * 15
-        except:
-            # Possible fix for #15
-            tzHexVal = int((tzHexVal & 0x0F) * 0x10) + int((tzHexVal & 0x0F) / 0x10)
-            tzOffsetMinutes = int('{0:0>2X}'.format(tzHexVal & 0x7F)) * 15
+
+        # Possible fix for #15 - convert invalid character to BCD-value
+        if (tzHexVal & 0x0F) > 0x9:
+            tzHexVal +=0x06
+
+        tzOffsetMinutes = int('{0:0>2X}'.format(tzHexVal & 0x7F)) * 15
 
         if tzHexVal & 0x80 == 0: # positive
             self._offset = timedelta(minutes=(tzOffsetMinutes))
@@ -272,6 +272,10 @@ def encodeSmsSubmitPdu(number, text, reference=0, validity=None, smsc=None, requ
     :return: A list of one or more tuples containing the SMS PDU (as a bytearray, and the length of the TPDU part
     :rtype: list of tuples
     """
+    if PYTHON_VERSION < 3:
+        if type(text) == str:
+            text = text.decode('UTF-8')
+
     tpduFirstOctet = 0x01 # SMS-SUBMIT PDU
     if validity != None:
         # Validity period format (TP-VPF) is stored in bits 4,3 of the first TPDU octet
